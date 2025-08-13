@@ -14,11 +14,11 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TZ_OFFSET = int(os.environ.get("TZ_OFFSET", "5"))  # часовой пояс
 
 POST_TIMES = ["09:00", "21:00"]  # локальное время
-SEEN_FILE = "seen_posts.json"    # файл для хранения опубликованных ID
+SEEN_FILE = "seen_posts.json"
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# === Загружаем ID уже опубликованных новостей ===
+# === Работа с файлом уже опубликованных постов ===
 def load_seen():
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE, "r", encoding="utf-8") as f:
@@ -47,24 +47,27 @@ def get_top_posts(limit=5):
 # === Генерация текста через Gemini ===
 def generate_post(title, link):
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    prompt = f"Сделай короткий и цепляющий пост для Telegram по новости: '{title}'. Ссылка: {link}"
+    prompt = f"Сделай цепляющий, короткий пост для Telegram по новости: '{title}'. Ссылка: {link}."
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
         r = requests.post(endpoint, json=payload)
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        raw_text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # Берём только первую строку
+        clean_text = raw_text.split("\n")[0]
+        return clean_text
     except Exception as e:
         print(f"[❌] Ошибка Gemini: {e}")
         return f"{title}\n{link}"
 
-# === Постинг в Telegram ===
+# === Отправка в Telegram ===
 def post_to_telegram(text):
     try:
         bot.send_message(chat_id=TELEGRAM_CHANNEL, text=text, parse_mode="HTML")
-        print(f"[✅] Отправлено: {text[:50]}...")
+        print(f"[✅] Отправлено в канал: {text[:60]}...")
     except Exception as e:
-        print(f"[❌] Ошибка отправки в Telegram: {e}")
+        print(f"[❌] Ошибка Telegram: {e}")
 
-# === Задача ===
+# === Основная задача ===
 def job():
     global seen_ids
     print(f"[🕒] Запуск постинга в {datetime.utcnow()} UTC")
@@ -75,7 +78,8 @@ def job():
         text = generate_post(title, link)
         post_to_telegram(text)
         seen_ids.add(post_id)
-    save_seen(seen_ids)
+        save_seen(seen_ids)
+        break  # публикуем только одну новость за раз
 
 # === Планировщик ===
 def schedule_jobs():
@@ -86,7 +90,7 @@ def schedule_jobs():
         print(f"[⏰] Запланировано: {local_time} (локальное) / {utc_time.strftime('%H:%M')} UTC")
 
 if __name__ == "__main__":
-    job()  # постим сразу при запуске
+    job()  # сразу постим при запуске
     schedule_jobs()
     while True:
         schedule.run_pending()
